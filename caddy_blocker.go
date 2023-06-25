@@ -109,7 +109,7 @@ func (m Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	switch lrw.statusCode {
 	case http.StatusUnauthorized, http.StatusForbidden:
 		m.lruCache.Add(ip, unAuthTimes+1)
-		m.w.Write([]byte(fmt.Sprintf("!!!! %v, %v, %v", lrw.statusCode, ip, port)))
+		m.w.Write([]byte(fmt.Sprintf("unauth_status:%v, times:%v, ip:%v, port:%v\n", lrw.statusCode, unAuthTimes+1, ip, port)))
 	}
 	return nil
 }
