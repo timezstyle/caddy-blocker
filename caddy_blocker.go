@@ -3,8 +3,10 @@ package caddy_blocker
 import (
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
@@ -34,9 +36,9 @@ func (lrw *loggingResponseWriter) WriteHeader(code int) {
 // Middleware implements an HTTP handler that writes the
 // visitor's IP address to a file or stream.
 type Middleware struct {
-	// The file or stream to write to. Can be "stdout"
-	// or "stderr".
-	Output string `json:"output,omitempty"`
+	// The BlockTime
+	BlockTime string `json:"block_time,omitempty"`
+	blockTime time.Duration
 
 	w io.Writer
 }
@@ -51,14 +53,12 @@ func (Middleware) CaddyModule() caddy.ModuleInfo {
 
 // Provision implements caddy.Provisioner.
 func (m *Middleware) Provision(ctx caddy.Context) error {
-	switch m.Output {
-	case "stdout":
-		m.w = os.Stdout
-	case "stderr":
-		m.w = os.Stderr
-	default:
-		return fmt.Errorf("an output stream is required")
+	var err error
+	m.blockTime, err = time.ParseDuration(m.BlockTime)
+	if err != nil {
+		return fmt.Errorf("block_time is wrong with value: %v", m.BlockTime)
 	}
+	m.w = os.Stdout
 	return nil
 }
 
@@ -78,7 +78,8 @@ func (m Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		return err
 	}
 	if lrw.statusCode == http.StatusUnauthorized {
-		m.w.Write([]byte("!!!! " + r.RemoteAddr))
+		ip, port, err := net.SplitHostPort(r.RemoteAddr)
+		m.w.Write([]byte(fmt.Sprintf("!!!! %v, %v, %v", ip, port, err)))
 	}
 	return nil
 }
@@ -86,7 +87,7 @@ func (m Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 // UnmarshalCaddyfile implements caddyfile.Unmarshaler.
 func (m *Middleware) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	for d.Next() {
-		if !d.Args(&m.Output) {
+		if !d.Args(&m.BlockTime) {
 			return d.ArgErr()
 		}
 	}
