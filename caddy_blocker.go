@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
@@ -90,9 +91,16 @@ func (m *Middleware) Validate() error {
 
 // ServeHTTP implements caddyhttp.MiddlewareHandler.
 func (m Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
-	ip, port, _ := net.SplitHostPort(r.RemoteAddr)
+	clientIP := r.Header.Get("X-Forwarded-For")
+	clientIP = strings.TrimSpace(strings.Split(clientIP, ",")[0])
+	if clientIP == "" {
+		clientIP = strings.TrimSpace(r.Header.Get("X-Real-Ip"))
+	}
+	if clientIP == "" {
+		clientIP, _, _ = net.SplitHostPort(r.RemoteAddr)
+	}
 	var unAuthTimes int
-	if v, ok := m.lruCache.Get(ip); ok {
+	if v, ok := m.lruCache.Get(clientIP); ok {
 		unAuthTimes = v.(int)
 	}
 	if unAuthTimes >= m.maxUnAuthTimes {
@@ -108,8 +116,8 @@ func (m Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 
 	switch lrw.statusCode {
 	case http.StatusUnauthorized, http.StatusForbidden:
-		m.lruCache.Add(ip, unAuthTimes+1)
-		m.w.Write([]byte(fmt.Sprintf("unauth_status:%v, times:%v, ip:%v, port:%v\n", lrw.statusCode, unAuthTimes+1, ip, port)))
+		m.lruCache.Add(clientIP, unAuthTimes+1)
+		m.w.Write([]byte(fmt.Sprintf("unauth_status:%v, times:%v, ip:%v\n", lrw.statusCode, unAuthTimes+1, clientIP)))
 	}
 	return nil
 }
