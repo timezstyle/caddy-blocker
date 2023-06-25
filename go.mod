@@ -2,7 +2,10 @@ module github.com/timezstyle/caddy-blocker
 
 go 1.20
 
-require github.com/caddyserver/caddy/v2 v2.6.4
+require (
+	github.com/caddyserver/caddy/v2 v2.6.4
+	github.com/projectdiscovery/expirablelru v1.0.0
+)
 
 require (
 	filippo.io/edwards25519 v1.0.0 // indirect

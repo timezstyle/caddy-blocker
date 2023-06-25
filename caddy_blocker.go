@@ -6,12 +6,14 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
+	"github.com/projectdiscovery/expirablelru"
 )
 
 func init() {
@@ -36,9 +38,14 @@ func (lrw *loggingResponseWriter) WriteHeader(code int) {
 // Middleware implements an HTTP handler that writes the
 // visitor's IP address to a file or stream.
 type Middleware struct {
-	// The BlockTime
-	BlockTime string `json:"block_time,omitempty"`
-	blockTime time.Duration
+	MaxUnAuthTimes string `json:"max_unauth_times"`
+	maxUnAuthTimes int
+
+	BlockDuration string `json:"block_duration"`
+	blockDuration time.Duration
+
+	CacheSize string `json:"cache_size"`
+	lruCache  *expirablelru.Cache
 
 	w io.Writer
 }
@@ -54,10 +61,21 @@ func (Middleware) CaddyModule() caddy.ModuleInfo {
 // Provision implements caddy.Provisioner.
 func (m *Middleware) Provision(ctx caddy.Context) error {
 	var err error
-	m.blockTime, err = time.ParseDuration(m.BlockTime)
+	m.blockDuration, err = time.ParseDuration(m.BlockDuration)
 	if err != nil {
-		return fmt.Errorf("block_time is wrong with value: %v", m.BlockTime)
+		return fmt.Errorf("block_duration is wrong with value: %v", m.BlockDuration)
 	}
+	cacheSize, err := strconv.Atoi(m.CacheSize)
+	if err != nil {
+		return fmt.Errorf("cache_size is wrong with value: %v", m.CacheSize)
+	}
+	m.lruCache = expirablelru.NewExpirableLRU(cacheSize, nil, m.blockDuration, 0)
+
+	m.maxUnAuthTimes, err = strconv.Atoi(m.MaxUnAuthTimes)
+	if err != nil {
+		return fmt.Errorf("max_unauth_times is wrong with value: %v", m.MaxUnAuthTimes)
+	}
+
 	m.w = os.Stdout
 	return nil
 }
@@ -72,14 +90,26 @@ func (m *Middleware) Validate() error {
 
 // ServeHTTP implements caddyhttp.MiddlewareHandler.
 func (m Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+	ip, port, _ := net.SplitHostPort(r.RemoteAddr)
+	var unAuthTimes int
+	if v, ok := m.lruCache.Get(ip); ok {
+		unAuthTimes = v.(int)
+	}
+	if unAuthTimes > m.maxUnAuthTimes {
+		w.WriteHeader(http.StatusUnauthorized)
+		return nil
+	}
+
 	lrw := NewLoggingResponseWriter(w)
 	err := next.ServeHTTP(lrw, r)
 	if err != nil {
 		return err
 	}
-	if lrw.statusCode == http.StatusUnauthorized {
-		ip, port, err := net.SplitHostPort(r.RemoteAddr)
-		m.w.Write([]byte(fmt.Sprintf("!!!! %v, %v, %v", ip, port, err)))
+
+	switch lrw.statusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		m.lruCache.Add(ip, unAuthTimes+1)
+		m.w.Write([]byte(fmt.Sprintf("!!!! %v, %v, %v", lrw.statusCode, ip, port)))
 	}
 	return nil
 }
@@ -87,7 +117,7 @@ func (m Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 // UnmarshalCaddyfile implements caddyfile.Unmarshaler.
 func (m *Middleware) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	for d.Next() {
-		if !d.Args(&m.BlockTime) {
+		if !d.Args(&m.CacheSize, &m.MaxUnAuthTimes, &m.BlockDuration) {
 			return d.ArgErr()
 		}
 	}
