@@ -95,7 +95,7 @@ func (m Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	if v, ok := m.lruCache.Get(ip); ok {
 		unAuthTimes = v.(int)
 	}
-	if unAuthTimes > m.maxUnAuthTimes {
+	if unAuthTimes >= m.maxUnAuthTimes {
 		w.WriteHeader(http.StatusUnauthorized)
 		return nil
 	}
