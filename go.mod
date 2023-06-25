@@ -1,4 +1,4 @@
-module caddy_blocker
+module github.com/timezstyle/caddy-blocker
 
 go 1.20
 
